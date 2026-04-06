@@ -72,7 +72,6 @@ with tf.device('/gpu:0'):
     model.compile(loss='sparse_categorical_crossentropy',
                   optimizer=Adam(),
                   metrics=['accuracy'])
-
     save_callback = tf.keras.callbacks.ModelCheckpoint("pneumonia.keras",save_freq='epoch',save_best_only=True)
 
     if fit:
