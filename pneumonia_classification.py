@@ -16,11 +16,11 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = SCRIPT_DIR / "outputs"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-batch_size = 12
+batch_size = 16
 num_classes = 3
-epochs = 8
-img_width = 128
-img_height = 128
+epochs = 15
+img_width = 224
+img_height = 224
 img_channels = 3
 fit = True
 train_dir = str(SCRIPT_DIR / 'chest_xray' / 'train')
@@ -78,15 +78,19 @@ with tf.device('/gpu:0'):
                   optimizer=Adam(),
                   metrics=['accuracy'])
 
+    earlystop_callback = tf.keras.callbacks.EarlyStopping(
+        monitor='val_loss', patience=5, restore_best_weights=True)
     save_callback = tf.keras.callbacks.ModelCheckpoint(
         str(OUTPUT_DIR / "pneumonia.keras"), save_freq='epoch', save_best_only=True)
+    lr_reduce = tf.keras.callbacks.ReduceLROnPlateau(
+        monitor='val_loss', factor=0.5, patience=3, min_lr=1e-6, verbose=1)
 
     if fit:
         history = model.fit(
             train_ds,
             batch_size=batch_size,
             validation_data=val_ds,
-            callbacks=[save_callback],
+            callbacks=[save_callback, earlystop_callback, lr_reduce],
             epochs=epochs)
     else:
         model = tf.keras.models.load_model(str(OUTPUT_DIR / "pneumonia.keras"))
