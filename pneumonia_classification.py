@@ -62,15 +62,21 @@ with tf.device('/gpu:0'):
 
     model = tf.keras.models.Sequential([
         Rescaling(1.0/255),
-        Conv2D(16, (3,3), activation='relu', input_shape=(img_height, img_width, img_channels)),
+        Conv2D(32, (3,3), activation='relu', input_shape=(img_height, img_width, img_channels)),
+        BatchNormalization(),
         MaxPooling2D(2,2),
-        Conv2D(32, (3,3), activation='relu'),
+        Conv2D(64, (3,3), activation='relu'),
+        BatchNormalization(),
         MaxPooling2D(2,2),
-        Conv2D(32, (3,3), activation='relu'),
+        Conv2D(64, (3,3), activation='relu'),
+        BatchNormalization(),
+        MaxPooling2D(2,2),
+        Conv2D(128, (3,3), activation='relu'),
+        BatchNormalization(),
         MaxPooling2D(2,2),
         Flatten(),
-        Dense(512, activation='relu'),
-        Dropout(0.2),
+        Dense(256, activation='relu'),
+        Dropout(0.3),
         Dense(num_classes, activation='softmax')
     ])
 
