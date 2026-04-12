@@ -60,7 +60,14 @@ with tf.device('/gpu:0'):
     plt.savefig(OUTPUT_DIR / 'pneumonia_train_preview.png', dpi=150)
     plt.close()
 
+    data_augmentation = tf.keras.Sequential([
+        tf.keras.layers.RandomFlip("horizontal"),
+        tf.keras.layers.RandomRotation(0.05),
+        tf.keras.layers.RandomZoom(0.1),
+    ], name="data_augmentation")
+
     model = tf.keras.models.Sequential([
+        data_augmentation,
         Rescaling(1.0/255),
         Conv2D(32, (3,3), activation='relu', input_shape=(img_height, img_width, img_channels)),
         BatchNormalization(),
