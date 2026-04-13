@@ -4,7 +4,7 @@ import keras
 import tensorflow as tf
 from keras.datasets import mnist
 from keras.models import Sequential
-from keras.layers import Dense, Dropout, Flatten, Conv2D, MaxPooling2D, Rescaling, BatchNormalization
+from keras.layers import Dense, Dropout, Conv2D, MaxPooling2D, Rescaling, GlobalAveragePooling2D
 from keras.optimizers import RMSprop, Adam
 import matplotlib
 matplotlib.use("Agg")
@@ -66,24 +66,22 @@ with tf.device('/gpu:0'):
         tf.keras.layers.RandomZoom(0.1),
     ], name="data_augmentation")
 
+    # GAP generalises better than huge Flatten + Dense
     model = tf.keras.models.Sequential([
         data_augmentation,
         Rescaling(1.0/255),
         Conv2D(32, (3,3), activation='relu', input_shape=(img_height, img_width, img_channels)),
-        BatchNormalization(),
         MaxPooling2D(2,2),
         Conv2D(64, (3,3), activation='relu'),
-        BatchNormalization(),
         MaxPooling2D(2,2),
         Conv2D(64, (3,3), activation='relu'),
-        BatchNormalization(),
         MaxPooling2D(2,2),
         Conv2D(128, (3,3), activation='relu'),
-        BatchNormalization(),
         MaxPooling2D(2,2),
-        Flatten(),
-        Dense(256, activation='relu'),
-        Dropout(0.3),
+        GlobalAveragePooling2D(),
+        Dropout(0.35),
+        Dense(128, activation='relu'),
+        Dropout(0.25),
         Dense(num_classes, activation='softmax')
     ])
 
