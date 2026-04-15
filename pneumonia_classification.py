@@ -1,7 +1,7 @@
 from __future__ import print_function
 
 import tensorflow as tf
-from keras.layers import Dense, Dropout, GlobalAveragePooling2D, Rescaling
+from keras.layers import Dense, Dropout, GlobalAveragePooling2D
 from keras.optimizers import Adam
 import matplotlib
 matplotlib.use("Agg")
@@ -66,11 +66,14 @@ base = tf.keras.applications.MobileNetV2(
     weights='imagenet',
     input_shape=(img_height, img_width, img_channels),
 )
-# should freeze backbone for faster stable training
+base.trainable = False
+
+preprocess_input = tf.keras.applications.mobilenet_v2.preprocess_input
+
 inputs = tf.keras.Input(shape=(img_height, img_width, img_channels))
 x = data_augmentation(inputs)
-x = Rescaling(1.0/255)(x)
-x = base(x)
+x = preprocess_input(x)
+x = base(x, training=False)
 x = GlobalAveragePooling2D()(x)
 x = Dropout(0.35)(x)
 x = Dense(128, activation='relu')(x)
