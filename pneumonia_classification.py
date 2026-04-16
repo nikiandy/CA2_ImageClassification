@@ -61,28 +61,39 @@ data_augmentation = tf.keras.Sequential([
     tf.keras.layers.RandomZoom(0.1),
 ], name="data_augmentation")
 
-base = tf.keras.applications.MobileNetV2(
-    include_top=False,
-    weights='imagenet',
-    input_shape=(img_height, img_width, img_channels),
-)
-base.trainable = False
+try:
+    base = tf.keras.applications.EfficientNetB0(
+        include_top=False,
+        weights='imagenet',
+        input_shape=(img_height, img_width, img_channels),
+    )
+    preprocess_input = tf.keras.applications.efficientnet.preprocess_input
+    print("Using EfficientNetB0 backbone.")
+except Exception as e:
+    print("EfficientNetB0 weights failed ({}), falling back to MobileNetV2.".format(e))
+    base = tf.keras.applications.MobileNetV2(
+        include_top=False,
+        weights='imagenet',
+        input_shape=(img_height, img_width, img_channels),
+    )
+    preprocess_input = tf.keras.applications.mobilenet_v2.preprocess_input
+    print("Using MobileNetV2 backbone.")
 
-preprocess_input = tf.keras.applications.mobilenet_v2.preprocess_input
+base.trainable = False
 
 inputs = tf.keras.Input(shape=(img_height, img_width, img_channels))
 x = data_augmentation(inputs)
 x = preprocess_input(x)
 x = base(x, training=False)
 x = GlobalAveragePooling2D()(x)
-x = Dropout(0.35)(x)
+x = Dropout(0.4)(x)
 x = Dense(128, activation='relu')(x)
-x = Dropout(0.25)(x)
+x = Dropout(0.3)(x)
 outputs = Dense(num_classes, activation='softmax')(x)
 model = tf.keras.Model(inputs, outputs)
 
 model.compile(loss='sparse_categorical_crossentropy',
-              optimizer=Adam(),
+              optimizer=Adam(learning_rate=1e-3),
               metrics=['accuracy'])
 
 earlystop_callback = tf.keras.callbacks.EarlyStopping(
