@@ -45,6 +45,33 @@ class_names = train_ds.class_names
 print('Class Names:', class_names)
 num_classes = len(class_names)
 
+counts = {}
+for i, name in enumerate(class_names):
+    folder = Path(train_dir) / name
+    counts[name] = sum(1 for p in folder.iterdir() if p.suffix.lower() in ('.png', '.jpg', '.jpeg'))
+print("Training folder counts:", counts)
+
+fig, ax = plt.subplots(figsize=(7, 4))
+names = list(counts.keys())
+vals = [counts[n] for n in names]
+ax.bar(names, vals, color=['#4a90d9', '#7cb342', '#e57373'])
+ax.set_ylabel('Images')
+ax.set_title('Training set class distribution (before val split)')
+for i, v in enumerate(vals):
+    ax.text(i, v, str(v), ha='center', va='bottom', fontsize=10)
+plt.tight_layout()
+plt.savefig(OUTPUT_DIR / 'dataset_distribution_train.png', dpi=150)
+plt.close()
+
+n_total = float(sum(counts.values()))
+class_weights = {}
+for i, name in enumerate(class_names):
+    w = n_total / (num_classes * float(counts[name]))
+    if name in ('BACTERIAL', 'VIRAL'):
+        w *= 1.15
+    class_weights[i] = w
+print("Class weights (inverse frequency x1.15 on sick classes):", class_weights)
+
 plt.figure(figsize=(10, 10))
 for images, labels in train_ds.take(2):
     for i in range(6):
@@ -107,6 +134,7 @@ if fit:
     history = model.fit(
         train_ds,
         validation_data=val_ds,
+        class_weight=class_weights,
         callbacks=[save_callback, earlystop_callback, lr_reduce],
         epochs=epochs)
 else:
