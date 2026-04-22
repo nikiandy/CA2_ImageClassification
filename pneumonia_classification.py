@@ -8,6 +8,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
+from sklearn.metrics import classification_report, confusion_matrix
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = SCRIPT_DIR / "outputs"
@@ -35,11 +36,11 @@ train_ds, val_ds = tf.keras.preprocessing.image_dataset_from_directory(
 
 test_ds = tf.keras.preprocessing.image_dataset_from_directory(
     test_dir,
-    seed=None,
+    seed=123,
     image_size=(img_height, img_width),
     batch_size=batch_size,
     labels='inferred',
-    shuffle=True)
+    shuffle=False)
 
 class_names = train_ds.class_names
 print('Class Names:', class_names)
@@ -140,18 +141,54 @@ if fit:
 else:
     model = tf.keras.models.load_model(str(OUTPUT_DIR / "pneumonia.keras"))
 
-score = model.evaluate(test_ds, batch_size=batch_size)
+score = model.evaluate(test_ds, verbose=0)
+print('Test loss:', score[0])
 print('Test accuracy:', score[1])
 
 if fit:
-    plt.plot(history.history['accuracy'])
-    plt.plot(history.history['val_accuracy'])
-    plt.title('model accuracy')
-    plt.ylabel('accuracy')
-    plt.xlabel('epoch')
-    plt.legend(['train', 'val'], loc='upper left')
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(history.history['accuracy'], label='train')
+    ax.plot(history.history['val_accuracy'], label='validation')
+    ax.set_title('Model accuracy')
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Accuracy')
+    ax.legend(loc='lower right')
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
     plt.savefig(OUTPUT_DIR / 'pneumonia_accuracy.png', dpi=150)
     plt.close()
+
+probs = model.predict(test_ds, verbose=0)
+y_true = np.concatenate([labels.numpy() for _, labels in test_ds], axis=0)
+y_pred = np.argmax(probs, axis=1)
+
+print("\nClassification report (test set):")
+print(classification_report(y_true, y_pred, target_names=class_names, digits=4))
+
+cm = confusion_matrix(y_true, y_pred)
+fig, ax = plt.subplots(figsize=(6, 5))
+im = ax.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
+ax.figure.colorbar(im, ax=ax)
+tick_marks = np.arange(len(class_names))
+ax.set(
+    xticks=tick_marks,
+    yticks=tick_marks,
+    xticklabels=class_names,
+    yticklabels=class_names,
+    ylabel='True label',
+    xlabel='Predicted label',
+    title='Chest X-ray test confusion matrix',
+)
+plt.setp(ax.get_xticklabels(), rotation=45, ha='right', rotation_mode='anchor')
+thresh = cm.max() / 2.0 if cm.size else 0
+for i in range(cm.shape[0]):
+    for j in range(cm.shape[1]):
+        ax.text(j, i, format(cm[i, j], 'd'),
+                ha='center', va='center',
+                color='white' if cm[i, j] > thresh else 'black')
+plt.tight_layout()
+plt.savefig(OUTPUT_DIR / 'pneumonia_confusion_matrix.png', dpi=150)
+plt.close()
 
 test_batch = test_ds.take(1)
 plt.figure(figsize=(10, 10))
@@ -159,7 +196,7 @@ for images, labels in test_batch:
     for i in range(6):
         ax = plt.subplot(2, 3, i + 1)
         plt.imshow(images[i].numpy().astype("uint8"))
-        prediction = model.predict(tf.expand_dims(images[i].numpy(), 0))
+        prediction = model.predict(tf.expand_dims(images[i].numpy(), 0), verbose=0)
         plt.title('Actual:' + class_names[labels[i].numpy()] + '\nPredicted:{} {:.2f}%'.format(
             class_names[np.argmax(prediction)], 100 * np.max(prediction)))
         plt.axis("off")
