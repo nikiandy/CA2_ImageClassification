@@ -16,11 +16,13 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 batch_size = 16
 num_classes = 3
-epochs = 15
+epochs_head = 15
+epochs_finetune = 10
 img_width = 224
 img_height = 224
 img_channels = 3
 fit = True
+do_finetune = True
 train_dir = str(SCRIPT_DIR / 'chest_xray' / 'train')
 test_dir = str(SCRIPT_DIR / 'chest_xray' / 'test')
 
@@ -125,31 +127,57 @@ model.compile(loss='sparse_categorical_crossentropy',
               metrics=['accuracy'])
 
 earlystop_callback = tf.keras.callbacks.EarlyStopping(
-    monitor='val_loss', patience=5, restore_best_weights=True)
+    monitor='val_accuracy', mode='max', patience=7, restore_best_weights=True, verbose=1)
 save_callback = tf.keras.callbacks.ModelCheckpoint(
-    str(OUTPUT_DIR / "pneumonia.keras"), save_freq='epoch', save_best_only=True)
+    filepath=str(OUTPUT_DIR / "best_pneumonia.keras"),
+    monitor='val_accuracy', mode='max', save_best_only=True, verbose=1)
 lr_reduce = tf.keras.callbacks.ReduceLROnPlateau(
     monitor='val_loss', factor=0.5, patience=3, min_lr=1e-6, verbose=1)
+
+history = None
 
 if fit:
     history = model.fit(
         train_ds,
         validation_data=val_ds,
+        epochs=epochs_head,
         class_weight=class_weights,
         callbacks=[save_callback, earlystop_callback, lr_reduce],
-        epochs=epochs)
+        verbose=1)
+
+    if do_finetune:
+        base.trainable = True
+        freeze_until = int(len(base.layers) * 0.65)
+        for layer in base.layers[:freeze_until]:
+            layer.trainable = False
+        model.compile(
+            optimizer=tf.keras.optimizers.Adam(learning_rate=1e-5),
+            loss='sparse_categorical_crossentropy',
+            metrics=['accuracy'])
+        hist2 = model.fit(
+            train_ds,
+            validation_data=val_ds,
+            epochs=epochs_head + epochs_finetune,
+            initial_epoch=len(history.history['loss']),
+            class_weight=class_weights,
+            callbacks=[save_callback, earlystop_callback, lr_reduce],
+            verbose=1)
+        for k in history.history:
+            history.history[k].extend(hist2.history[k])
+
+    model.save(str(OUTPUT_DIR / "best_pneumonia.keras"))
 else:
-    model = tf.keras.models.load_model(str(OUTPUT_DIR / "pneumonia.keras"))
+    model = tf.keras.models.load_model(str(OUTPUT_DIR / "best_pneumonia.keras"))
 
 score = model.evaluate(test_ds, verbose=0)
 print('Test loss:', score[0])
 print('Test accuracy:', score[1])
 
-if fit:
+if history is not None:
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.plot(history.history['accuracy'], label='train')
     ax.plot(history.history['val_accuracy'], label='validation')
-    ax.set_title('Model accuracy')
+    ax.set_title('Model accuracy (train vs val)')
     ax.set_xlabel('Epoch')
     ax.set_ylabel('Accuracy')
     ax.legend(loc='lower right')
