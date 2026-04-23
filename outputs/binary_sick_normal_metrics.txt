@@ -1,0 +1,8 @@
+sick_recall=0.9873
+sick_precision=0.9453
+sick_f1=0.9658
+specificity=0.8525
+sick_tp=311
+sick_fn=4
+sick_fp=18
+sick_tn=104
