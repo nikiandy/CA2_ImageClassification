@@ -1,3 +1,5 @@
+# Chest X-ray: BACTERIAL / NORMAL / VIRAL
+
 from __future__ import print_function
 
 import os
@@ -32,7 +34,7 @@ img_channels = 3
 fit = True
 do_finetune = True
 
-# Avoid HTTP 403 for downloading ImageNet weights
+# Avoid HTTP 403 when downloading ImageNet weights
 BACKBONE_LAYER_NAME = "transfer_backbone"
 
 
@@ -51,7 +53,7 @@ def patch_weights_download_user_agent():
 
 
 def build_model(num_classes, trainable_backbone=False):
-    # EfficientNetB0 if weights OK else MobileNetV2 (GAP + dense head)
+    # EfficientNetB0 if weights OK, else MobileNetV2 (GAP + dense head)
     base = None
     preprocess_input = None
     try:
@@ -101,7 +103,7 @@ def build_model(num_classes, trainable_backbone=False):
 
 
 def infer_preprocess_from_backbone(backbone):
-    # Choose EfficientNet vs MobileNet preprocess after load
+    # Choose EfficientNet vs MobileNet preprocess after load.
     names = {layer.name for layer in backbone.layers}
     if "stem_conv" in names:
         return tf.keras.applications.efficientnet.preprocess_input
@@ -109,7 +111,7 @@ def infer_preprocess_from_backbone(backbone):
 
 
 def make_gradcam_heatmap(img_batch, model, backbone, pred_index=None):
-    # GradCAM via GradientTape
+    # GradCAM via GradientTape (Keras 3 nested model workaround).
     aug = model.get_layer("data_augmentation")
     preproc = getattr(model, "_gradcam_preprocess", None)
     if preproc is None:

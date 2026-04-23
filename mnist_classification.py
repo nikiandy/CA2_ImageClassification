@@ -1,3 +1,5 @@
+# MNIST dense net   
+
 from __future__ import print_function
 
 import os
@@ -30,7 +32,7 @@ batch_size = 512
 num_classes = 10
 epochs = 20
 
-# reserve n_val rows from train for validation
+# load MNIST, reserve n_val rows from train for validation
 (x_train_full, y_train_full), (x_test, y_test) = mnist.load_data()
 
 n_val = 6000
