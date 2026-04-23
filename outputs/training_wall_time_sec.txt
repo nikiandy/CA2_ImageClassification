@@ -1,0 +1,2 @@
+Total training wall time (seconds): 2420.0
+Total training wall time (minutes): 40.33

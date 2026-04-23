@@ -1,5 +1,7 @@
 from __future__ import print_function
 
+import time
+import json
 import tensorflow as tf
 from keras.optimizers import Adam
 import matplotlib
@@ -15,8 +17,8 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 batch_size = 16
 num_classes = 3
-epochs_head = 15
-epochs_finetune = 10
+epochs_head = 25
+epochs_finetune = 12
 img_width = 224
 img_height = 224
 img_channels = 3
@@ -108,6 +110,11 @@ class_names = train_ds.class_names
 print('Class Names:', class_names)
 num_classes = len(class_names)
 
+AUTOTUNE = tf.data.AUTOTUNE
+train_ds = train_ds.prefetch(AUTOTUNE)
+val_ds = val_ds.cache().prefetch(AUTOTUNE)
+test_ds = test_ds.cache().prefetch(AUTOTUNE)
+
 counts = {}
 for i, name in enumerate(class_names):
     folder = Path(train_dir) / name
@@ -183,28 +190,32 @@ x = tf.keras.layers.Dropout(0.25, name="head_dropout2")(x)
 outputs = tf.keras.layers.Dense(num_classes, activation="softmax", name="head_softmax")(x)
 model = tf.keras.Model(inputs, outputs)
 
-model.compile(loss='sparse_categorical_crossentropy',
-              optimizer=Adam(learning_rate=1e-3),
-              metrics=['accuracy'])
+model.compile(
+    optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
+    loss='sparse_categorical_crossentropy',
+    metrics=['accuracy'])
 
-earlystop_callback = tf.keras.callbacks.EarlyStopping(
-    monitor='val_accuracy', mode='max', patience=7, restore_best_weights=True, verbose=1)
 save_callback = tf.keras.callbacks.ModelCheckpoint(
     filepath=str(OUTPUT_DIR / "best_pneumonia.keras"),
     monitor='val_accuracy', mode='max', save_best_only=True, verbose=1)
+early_callback = tf.keras.callbacks.EarlyStopping(
+    monitor='val_accuracy', mode='max', patience=7, restore_best_weights=True, verbose=1)
 lr_reduce = tf.keras.callbacks.ReduceLROnPlateau(
     monitor='val_loss', factor=0.5, patience=3, min_lr=1e-6, verbose=1)
 
 history = None
+t_train = None
 
 if fit:
+    t0 = time.perf_counter()
     history = model.fit(
         train_ds,
         validation_data=val_ds,
         epochs=epochs_head,
         class_weight=class_weights,
-        callbacks=[save_callback, earlystop_callback, lr_reduce],
+        callbacks=[save_callback, early_callback, lr_reduce],
         verbose=1)
+    t1 = time.perf_counter()
 
     if do_finetune:
         base.trainable = True
@@ -221,11 +232,17 @@ if fit:
             epochs=epochs_head + epochs_finetune,
             initial_epoch=len(history.history['loss']),
             class_weight=class_weights,
-            callbacks=[save_callback, earlystop_callback, lr_reduce],
+            callbacks=[save_callback, early_callback, lr_reduce],
             verbose=1)
         for k in history.history:
             history.history[k].extend(hist2.history[k])
+        t1 = time.perf_counter()
 
+    t_train = t1 - t0
+    with open(OUTPUT_DIR / "training_wall_time_sec.txt", "w", encoding="utf-8") as f:
+        f.write("Total training wall time (seconds): {:.1f}\n".format(t_train))
+        f.write("Total training wall time (minutes): {:.2f}\n".format(t_train / 60.0))
+    print("\nTotal training wall time: {:.1f} s ({:.2f} min)\n".format(t_train, t_train / 60.0))
     model.save(str(OUTPUT_DIR / "best_pneumonia.keras"))
 else:
     model = tf.keras.models.load_model(str(OUTPUT_DIR / "best_pneumonia.keras"))
@@ -235,6 +252,9 @@ print('Test loss:', score[0])
 print('Test accuracy:', score[1])
 
 if history is not None:
+    with open(OUTPUT_DIR / "training_history.json", "w") as f:
+        json.dump({k: [float(v) for v in vals] for k, vals in history.history.items()}, f)
+
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.plot(history.history['accuracy'], label='train')
     ax.plot(history.history['val_accuracy'], label='validation')
@@ -245,6 +265,18 @@ if history is not None:
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.savefig(OUTPUT_DIR / 'pneumonia_accuracy.png', dpi=150)
+    plt.close()
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(history.history['loss'], label='train')
+    ax.plot(history.history['val_loss'], label='validation')
+    ax.set_title('Model loss (train vs val)')
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Loss')
+    ax.legend(loc='upper right')
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(OUTPUT_DIR / 'pneumonia_loss.png', dpi=150)
     plt.close()
 
 probs = model.predict(test_ds, verbose=0)
@@ -312,3 +344,5 @@ try:
         break
 except Exception as e:
     print("GradCAM figures skipped:", e)
+
+model.summary()
