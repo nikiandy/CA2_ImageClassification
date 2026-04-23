@@ -103,7 +103,7 @@ def build_model(num_classes, trainable_backbone=False):
 
 
 def infer_preprocess_from_backbone(backbone):
-    # Choose EfficientNet vs MobileNet preprocess after load.
+    # Choose EfficientNet vs MobileNet preprocess after load
     names = {layer.name for layer in backbone.layers}
     if "stem_conv" in names:
         return tf.keras.applications.efficientnet.preprocess_input
@@ -111,7 +111,7 @@ def infer_preprocess_from_backbone(backbone):
 
 
 def make_gradcam_heatmap(img_batch, model, backbone, pred_index=None):
-    # GradCAM via GradientTape (Keras 3 nested model workaround).
+    # GradCAM via GradientTape (Keras 3 nested model workaround)
     aug = model.get_layer("data_augmentation")
     preproc = getattr(model, "_gradcam_preprocess", None)
     if preproc is None:
