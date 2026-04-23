@@ -1,7 +1,6 @@
 from __future__ import print_function
 
 import tensorflow as tf
-from keras.layers import Dense, Dropout, GlobalAveragePooling2D
 from keras.optimizers import Adam
 import matplotlib
 matplotlib.use("Agg")
@@ -25,6 +24,67 @@ fit = True
 do_finetune = True
 train_dir = str(SCRIPT_DIR / 'chest_xray' / 'train')
 test_dir = str(SCRIPT_DIR / 'chest_xray' / 'test')
+
+
+def infer_preprocess_from_backbone(backbone):
+    names = {layer.name for layer in backbone.layers}
+    if 'stem_conv' in names:
+        return tf.keras.applications.efficientnet.preprocess_input
+    return tf.keras.applications.mobilenet_v2.preprocess_input
+
+
+def make_gradcam_heatmap(img_batch, model, backbone, pred_index=None):
+    aug = model.get_layer("data_augmentation")
+    preproc = infer_preprocess_from_backbone(backbone)
+    gap = model.get_layer("gap")
+    drop1 = model.get_layer("head_dropout1")
+    dense = model.get_layer("head_dense")
+    drop2 = model.get_layer("head_dropout2")
+    softmax = model.get_layer("head_softmax")
+
+    with tf.GradientTape() as tape:
+        x = aug(img_batch, training=False)
+        x = preproc(x)
+        conv_out = backbone(x, training=False)
+        tape.watch(conv_out)
+        h = gap(conv_out)
+        h = drop1(h, training=False)
+        h = dense(h)
+        h = drop2(h, training=False)
+        preds = softmax(h)
+        if pred_index is None:
+            pred_index = int(np.argmax(preds[0].numpy()))
+        class_channel = preds[:, pred_index]
+
+    grads = tape.gradient(class_channel, conv_out)
+    pooled = tf.reduce_mean(grads, axis=(1, 2))
+    conv_out = conv_out[0]
+    heatmap = tf.reduce_sum(tf.cast(pooled, conv_out.dtype) * conv_out, axis=-1)
+    heatmap = tf.maximum(heatmap, 0)
+    m = tf.reduce_max(heatmap)
+    heatmap = heatmap / (m + 1e-10)
+    return heatmap.numpy(), pred_index
+
+
+def overlay_gradcam(img_uint8, heatmap, alpha=0.45):
+    try:
+        import cv2
+        img = img_uint8.astype(np.float32)
+        hm = np.uint8(255 * heatmap)
+        hm = cv2.resize(hm, (img.shape[1], img.shape[0]))
+        hm = cv2.applyColorMap(hm, cv2.COLORMAP_JET)
+        hm = cv2.cvtColor(hm, cv2.COLOR_BGR2RGB)
+        return (alpha * hm + (1 - alpha) * img).astype(np.uint8)
+    except ImportError:
+        h, w = img_uint8.shape[0], img_uint8.shape[1]
+        hm = tf.image.resize(
+            heatmap.reshape(1, heatmap.shape[0], heatmap.shape[1], 1),
+            (h, w), method='bilinear').numpy().squeeze()
+        jet = plt.cm.jet(np.clip(hm, 0, 1))[:, :, :3]
+        imgf = img_uint8.astype(np.float32) / 255.0
+        blend = alpha * jet + (1 - alpha) * imgf
+        return (np.clip(blend, 0, 1) * 255.0).astype(np.uint8)
+
 
 train_ds, val_ds = tf.keras.preprocessing.image_dataset_from_directory(
     train_dir,
@@ -55,12 +115,12 @@ for i, name in enumerate(class_names):
 print("Training folder counts:", counts)
 
 fig, ax = plt.subplots(figsize=(7, 4))
-names = list(counts.keys())
-vals = [counts[n] for n in names]
-ax.bar(names, vals, color=['#4a90d9', '#7cb342', '#e57373'])
+cnames = list(counts.keys())
+cvals = [counts[n] for n in cnames]
+ax.bar(cnames, cvals, color=['#4a90d9', '#7cb342', '#e57373'])
 ax.set_ylabel('Images')
 ax.set_title('Training set class distribution (before val split)')
-for i, v in enumerate(vals):
+for i, v in enumerate(cvals):
     ax.text(i, v, str(v), ha='center', va='bottom', fontsize=10)
 plt.tight_layout()
 plt.savefig(OUTPUT_DIR / 'dataset_distribution_train.png', dpi=150)
@@ -87,8 +147,9 @@ plt.close()
 
 data_augmentation = tf.keras.Sequential([
     tf.keras.layers.RandomFlip("horizontal"),
-    tf.keras.layers.RandomRotation(0.05),
-    tf.keras.layers.RandomZoom(0.1),
+    tf.keras.layers.RandomRotation(0.06),
+    tf.keras.layers.RandomZoom(0.08),
+    tf.keras.layers.RandomContrast(0.12),
 ], name="data_augmentation")
 
 try:
@@ -115,11 +176,11 @@ inputs = tf.keras.Input(shape=(img_height, img_width, img_channels))
 x = data_augmentation(inputs)
 x = preprocess_input(x)
 x = base(x, training=False)
-x = GlobalAveragePooling2D()(x)
-x = Dropout(0.4)(x)
-x = Dense(128, activation='relu')(x)
-x = Dropout(0.3)(x)
-outputs = Dense(num_classes, activation='softmax')(x)
+x = tf.keras.layers.GlobalAveragePooling2D(name="gap")(x)
+x = tf.keras.layers.Dropout(0.35, name="head_dropout1")(x)
+x = tf.keras.layers.Dense(128, activation="relu", name="head_dense")(x)
+x = tf.keras.layers.Dropout(0.25, name="head_dropout2")(x)
+outputs = tf.keras.layers.Dense(num_classes, activation="softmax", name="head_softmax")(x)
 model = tf.keras.Model(inputs, outputs)
 
 model.compile(loss='sparse_categorical_crossentropy',
@@ -231,42 +292,23 @@ for images, labels in test_batch:
 plt.savefig(OUTPUT_DIR / 'pneumonia_sample_predictions.png', dpi=150)
 plt.close()
 
-# GradCAM
 try:
-    last_conv_layer = None
-    for layer in base.layers[::-1]:
-        if isinstance(layer, tf.keras.layers.Conv2D):
-            last_conv_layer = layer
-            break
-
-    if last_conv_layer is not None:
-        grad_model = tf.keras.Model(
-            inputs=model.input,
-            outputs=[last_conv_layer.output, model.output])
-
-        for images, labels in test_ds.take(1):
-            img = images[0:1]
-            with tf.GradientTape() as tape:
-                conv_output, predictions = grad_model(img)
-                pred_class = tf.argmax(predictions[0])
-                class_channel = predictions[:, pred_class]
-            grads = tape.gradient(class_channel, conv_output)
-            pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-            heatmap = conv_output[0] @ pooled_grads[..., tf.newaxis]
-            heatmap = tf.squeeze(heatmap)
-            heatmap = tf.maximum(heatmap, 0) / (tf.math.reduce_max(heatmap) + 1e-10)
-
+    for images, labels in test_ds.take(1):
+        for i in range(min(3, images.shape[0])):
+            img = images[i:i+1]
+            hm, pidx = make_gradcam_heatmap(img, model, base)
+            raw = img[0].numpy().astype(np.uint8)
+            vis = overlay_gradcam(raw, hm)
             fig, ax = plt.subplots(1, 2, figsize=(8, 4))
-            ax[0].imshow(images[0].numpy().astype('uint8'))
+            ax[0].imshow(raw)
             ax[0].set_title('Input')
             ax[0].axis('off')
-            ax[1].imshow(heatmap.numpy(), cmap='jet')
-            ax[1].set_title('GradCAM heatmap')
+            ax[1].imshow(vis)
+            ax[1].set_title('GradCAM (pred: {})'.format(class_names[pidx]))
             ax[1].axis('off')
             plt.tight_layout()
-            plt.savefig(OUTPUT_DIR / 'gradcam_sample.png', dpi=150)
+            plt.savefig(OUTPUT_DIR / 'gradcam_sample_{}.png'.format(i), dpi=150)
             plt.close()
-            break
+        break
 except Exception as e:
-    print("GradCAM failed:", e)
-    print("GradCAM: try GradientTape through named layers next")
+    print("GradCAM figures skipped:", e)
