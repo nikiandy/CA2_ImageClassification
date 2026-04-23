@@ -230,3 +230,43 @@ for images, labels in test_batch:
         plt.axis("off")
 plt.savefig(OUTPUT_DIR / 'pneumonia_sample_predictions.png', dpi=150)
 plt.close()
+
+# GradCAM
+try:
+    last_conv_layer = None
+    for layer in base.layers[::-1]:
+        if isinstance(layer, tf.keras.layers.Conv2D):
+            last_conv_layer = layer
+            break
+
+    if last_conv_layer is not None:
+        grad_model = tf.keras.Model(
+            inputs=model.input,
+            outputs=[last_conv_layer.output, model.output])
+
+        for images, labels in test_ds.take(1):
+            img = images[0:1]
+            with tf.GradientTape() as tape:
+                conv_output, predictions = grad_model(img)
+                pred_class = tf.argmax(predictions[0])
+                class_channel = predictions[:, pred_class]
+            grads = tape.gradient(class_channel, conv_output)
+            pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+            heatmap = conv_output[0] @ pooled_grads[..., tf.newaxis]
+            heatmap = tf.squeeze(heatmap)
+            heatmap = tf.maximum(heatmap, 0) / (tf.math.reduce_max(heatmap) + 1e-10)
+
+            fig, ax = plt.subplots(1, 2, figsize=(8, 4))
+            ax[0].imshow(images[0].numpy().astype('uint8'))
+            ax[0].set_title('Input')
+            ax[0].axis('off')
+            ax[1].imshow(heatmap.numpy(), cmap='jet')
+            ax[1].set_title('GradCAM heatmap')
+            ax[1].axis('off')
+            plt.tight_layout()
+            plt.savefig(OUTPUT_DIR / 'gradcam_sample.png', dpi=150)
+            plt.close()
+            break
+except Exception as e:
+    print("GradCAM failed:", e)
+    print("GradCAM: try GradientTape through named layers next")
